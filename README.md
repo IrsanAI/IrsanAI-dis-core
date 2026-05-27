@@ -14,8 +14,8 @@
 ### Android / Termux
 ```bash
 pkg install git nodejs -y
-git clone https://github.com/IrsanAI/dis-core
-cd dis-core
+git clone https://github.com/IrsanAI/IrsanAI-dis-core
+cd IrsanAI-dis-core
 bash install.sh
 node server.js
 ```
@@ -23,16 +23,16 @@ Then open in browser: **http://localhost:3001**
 
 ### Linux / macOS
 ```bash
-git clone https://github.com/IrsanAI/dis-core
-cd dis-core
+git clone https://github.com/IrsanAI/IrsanAI-dis-core
+cd IrsanAI-dis-core
 bash install.sh
 node server.js
 ```
 
 ### Windows (PowerShell)
 ```powershell
-git clone https://github.com/IrsanAI/dis-core
-cd dis-core
+git clone https://github.com/IrsanAI/IrsanAI-dis-core
+cd IrsanAI-dis-core
 npm install
 npm run build
 node server.js
@@ -42,6 +42,8 @@ Then open: **http://localhost:3001**
 ---
 
 ## 🧠 Architecture
+
+```
 ┌─────────────────────────────────────────────────────────┐
 │  LAYER 4 — INTELLIGENCE                                 │
 │  Claude AI · CVE Matching · Zero-Day Intel              │
@@ -55,6 +57,7 @@ Then open: **http://localhost:3001**
 │  LAYER 1 — SENSORS                                      │
 │  Android · iPhone · Windows · Linux · Router            │
 └─────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -71,27 +74,42 @@ Then open: **http://localhost:3001**
 ---
 
 ## 📁 Repo Structure
-dis-core/
-├── package.json
-├── vite.config.js
-├── index.html
+
+```
+IrsanAI-dis-core/
+├── package.json          ← Dependencies
+├── vite.config.js        ← React build config
+├── index.html            ← Entry point
 ├── server.js             ← Auto-OS-Detector + WebSocket
 ├── install.sh            ← One-line installer
 ├── src/
-│   ├── main.jsx
+│   ├── main.jsx          ← React entry
 │   └── App.jsx           ← Full dashboard
 └── scripts/
-├── android/
-├── windows/
-└── linux/
+    ├── android/          ← Termux Scout Agents
+    ├── windows/          ← PowerShell Agents
+    └── linux/            ← Bash Agents
+```
 
 ---
 
 ## 🔒 DSGVO / Privacy
 
-✅ Technical metadata only — No contacts, messages, photos, location
+All scout scripts collect **technical metadata only**:
+- ✅ App package names, build properties, security settings
+- ✅ Hardware specs, network config (anonymized)
+- ❌ No contacts, messages, photos, location, account data
 
 ---
 
-**github.com/IrsanAI** · MIT License
-Commit → Das war das letzte File! 🎉
+## 🚀 IrsanAI Stack Roadmap
+
+- [ ] `dis-agent-ios` — iOS Shortcuts Agent
+- [ ] `dis-api` — REST API for multi-device orchestration
+- [ ] `dis-monitor` — Continuous background monitoring
+- [ ] Auto-patch engine — automated remediation
+- [ ] Threat feed — live CVE matching via web search
+
+---
+
+**[github.com/IrsanAI](https://github.com/IrsanAI)** · MIT License
