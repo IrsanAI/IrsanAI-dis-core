@@ -733,6 +733,160 @@ function ExportButton({onClick}) {
   );
 }
 
+
+// ── WINDOWS REPORT PASTE ───────────────────────────────────────────
+function WinReportPaste() {
+  const [json,setJson]=useState("");
+  const [err,setErr]=useState("");
+  const [analysis,setAnalysis]=useState(null);
+  const [analyzing,setAnalyzing]=useState(false);
+
+  const analyze = async () => {
+    setErr("");
+    let parsed;
+    try { parsed = JSON.parse(json.trim()); }
+    catch { setErr("❌ Kein gültiges JSON. Gesamten Report-Inhalt kopieren."); return; }
+    if(!parsed.dis_meta) { setErr("❌ Kein DIS Windows Report erkannt."); return; }
+    setAnalyzing(true);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:1000,
+          messages:[{role:"user", content:
+`IrsanAI Security Analyst. Windows Report. JSON only, no markdown:
+{
+  "threat_active": true/false,
+  "confidence": 0-100,
+  "risk_score": 0-100,
+  "risk_label": "KRITISCH|HOCH|MITTEL|NIEDRIG|SICHER",
+  "summary": "Was wurde gefunden?",
+  "active_indicators": ["konkreter Befund mit Wert aus dem Report"],
+  "immediate_actions": ["Sofortmaßnahme — mit konkretem Befehl"],
+  "hardening": ["Langzeit-Härtung"],
+  "auto_fix": ["powershell Befehl zum Fixen"],
+  "next_scan": "sofort|24h|7d|30d"
+}
+Report: ${JSON.stringify(parsed, null, 2)}`}]
+        })
+      });
+      const d = await res.json();
+      const txt = (d.content||[]).map(b=>b.text||"").join("").replace(/\`\`\`json|\`\`\`/g,"").trim();
+      setAnalysis(JSON.parse(txt));
+    } catch(e) { setErr("❌ KI-Fehler: "+e.message); }
+    setAnalyzing(false);
+  };
+
+  const exportForClaude = () => {
+    let parsed = {};
+    try { parsed = JSON.parse(json); } catch {}
+    const md = `# DIS Windows Security Report\n> IrsanAI Stack\n\n\`\`\`json\n${json}\n\`\`\`\n\n**Instruction:** Analysiere diesen Windows Security Report auf Deutsch. Risk-Score 0-100, Sofortmaßnahmen, Härtungsempfehlungen.`;
+    navigator.clipboard.writeText(md);
+  };
+
+  const c = SEV[analysis?.risk_label] || "#0078d4";
+  return (
+    <div>
+      <textarea value={json} onChange={e=>{setJson(e.target.value);setErr("");}}
+        placeholder={'{
+  "dis_meta": { "platform": "windows_powershell", ... },
+  "system": { "os_name": "Windows 11", ... },
+  ...
+}'}
+        style={{width:"100%",minHeight:160,background:"#030508",
+          border:`1px solid ${err?"#ff2d5544":"#0078d422"}`,
+          borderRadius:9,padding:"12px",color:"#5a8aaa",fontFamily:"monospace",
+          fontSize:10,resize:"vertical",outline:"none",boxSizing:"border-box",
+          lineHeight:1.6,marginBottom:8}}/>
+      {err&&<div style={{color:"#ff2d55",fontSize:11,padding:"7px 12px",
+        background:"#140507",borderRadius:6,marginBottom:8}}>{err}</div>}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <button onClick={analyze} disabled={!json.trim()||analyzing}
+          style={{flex:2,background:json.trim()?"#0078d418":"#0a0c14",
+            border:`1px solid ${json.trim()?"#0078d4":"#1a2030"}`,
+            color:json.trim()?"#0078d4":"#333",borderRadius:7,padding:"11px",
+            cursor:json.trim()?"pointer":"not-allowed",fontFamily:"monospace",fontWeight:700,fontSize:12}}>
+          {analyzing?"⏳ ANALYSIERT...":"🧠 MIT CLAUDE AI ANALYSIEREN →"}
+        </button>
+        {json.trim()&&<button onClick={exportForClaude}
+          style={{flex:1,background:"#bf9ffe18",border:"1px solid #bf9ffe44",
+            color:"#bf9ffe",borderRadius:7,padding:"11px",cursor:"pointer",
+            fontFamily:"monospace",fontWeight:700,fontSize:11}}>
+          🤖 FÜR CLAUDE EXPORTIEREN
+        </button>}
+      </div>
+      {analysis&&(
+        <div>
+          <div style={{background:SEV_BG[analysis.risk_label]||"#0a0c14",
+            border:`1px solid ${c}55`,borderRadius:12,padding:"14px 18px",marginBottom:12,
+            display:"flex",alignItems:"center",gap:14}}>
+            <div style={{textAlign:"center",minWidth:70}}>
+              <div style={{color:c,fontSize:36,fontWeight:900,lineHeight:1}}>{analysis.risk_score}</div>
+              <div style={{color:c,fontSize:9,letterSpacing:2,marginTop:3}}>RISK</div>
+            </div>
+            <div style={{flex:1,borderLeft:`1px solid ${c}33`,paddingLeft:14}}>
+              <div style={{color:c,fontWeight:700,fontSize:13,marginBottom:4}}>{analysis.risk_label}</div>
+              <div style={{color:"#c8d0e0",fontSize:11,lineHeight:1.6}}>{analysis.summary}</div>
+            </div>
+          </div>
+          {analysis.active_indicators?.length>0&&(
+            <div style={{background:"#080b12",border:"1px solid #1a2030",borderRadius:10,
+              padding:"12px 14px",marginBottom:10}}>
+              <div style={{color:"#ff2d55",fontSize:9,letterSpacing:2,marginBottom:8}}>⚠️ BEFUNDE</div>
+              {analysis.active_indicators.map((ind,i)=>(
+                <div key={i} style={{display:"flex",gap:8,padding:"4px 0",borderBottom:"1px solid #0f1520"}}>
+                  <span style={{color:"#ff2d55",fontSize:10}}>◆</span>
+                  <span style={{color:"#c8d0e0",fontSize:11}}>{ind}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            {analysis.immediate_actions?.length>0&&(
+              <div style={{background:"#080b12",border:"1px solid #1a2030",borderRadius:9,padding:"12px"}}>
+                <div style={{color:"#ff9500",fontSize:9,letterSpacing:2,marginBottom:8}}>🚨 SOFORT</div>
+                {analysis.immediate_actions.map((a,i)=>(
+                  <div key={i} style={{display:"flex",gap:6,marginBottom:6}}>
+                    <span style={{color:"#ff9500",flexShrink:0}}>{i+1}.</span>
+                    <span style={{color:"#c8d0e0",fontSize:10,lineHeight:1.5}}>{a}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {analysis.hardening?.length>0&&(
+              <div style={{background:"#080b12",border:"1px solid #1a2030",borderRadius:9,padding:"12px"}}>
+                <div style={{color:"#30d158",fontSize:9,letterSpacing:2,marginBottom:8}}>🛡️ HÄRTUNG</div>
+                {analysis.hardening.map((s,i)=>(
+                  <div key={i} style={{display:"flex",gap:6,marginBottom:6}}>
+                    <span style={{color:"#30d158",flexShrink:0}}>→</span>
+                    <span style={{color:"#8a9ab0",fontSize:10,lineHeight:1.5}}>{s}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {analysis.auto_fix?.length>0&&(
+            <div style={{background:"#001a08",border:"1px solid #30d15844",borderRadius:9,padding:"12px"}}>
+              <div style={{color:"#30d158",fontSize:9,letterSpacing:2,marginBottom:8}}>⚡ AUTO-FIX (PowerShell)</div>
+              {analysis.auto_fix.map((cmd,i)=>(
+                <div key={i} style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
+                  <code style={{flex:1,background:"#002a10",borderRadius:5,padding:"5px 10px",
+                    color:"#30d158",fontSize:10,fontFamily:"monospace",wordBreak:"break-all",
+                    border:"1px solid #30d15822"}}>{cmd}</code>
+                  <button onClick={()=>navigator.clipboard.writeText(cmd)}
+                    style={{background:"#30d15818",border:"1px solid #30d15844",color:"#30d158",
+                      borderRadius:5,padding:"5px 10px",cursor:"pointer",fontSize:9,
+                      fontFamily:"monospace",flexShrink:0}}>COPY</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ───────────────────────────────────────────────────────────
 export default function App() {
   const [env,setEnv]=useState(null);
@@ -816,7 +970,7 @@ export default function App() {
   );
 
   const TABS=[{id:"threats",icon:"🎯",label:"THREATS"},{id:"scan",icon:"🔬",label:"SCOUT"},
-    {id:"analyze",icon:"🧠",label:"ANALYSE"},{id:"intel",icon:"📡",label:"INTEL"}];
+    {id:"analyze",icon:"🧠",label:"ANALYSE"},{id:"windows",icon:"🪟",label:"WINDOWS"},{id:"intel",icon:"📡",label:"INTEL"}];
 
   return (
     <div style={{minHeight:"100vh",background:"#04050a",color:"#c8d0e0",fontFamily:"'Courier New',monospace",paddingBottom:60}}>
@@ -1055,6 +1209,100 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ WINDOWS TAB ══════════════════════════════════ */}
+        {tab==="windows"&&(
+          <div>
+            <div style={{background:"#080b12",border:"1px solid #0078d444",borderRadius:12,
+              padding:"20px",marginBottom:16}}>
+              <div style={{color:"#0078d4",fontSize:13,fontWeight:700,marginBottom:4}}>
+                🪟 DIS — Windows Security Scout
+              </div>
+              <div style={{color:"#2a3a4a",fontSize:11,marginBottom:16}}>
+                Führe den PowerShell Scout Agent auf deinem Windows-PC aus. 
+                Der Report wird automatisch in die Zwischenablage kopiert.
+              </div>
+
+              {/* Quick Start */}
+              <div style={{background:"#04050a",border:"1px solid #0078d422",borderRadius:10,
+                padding:"16px",marginBottom:16}}>
+                <div style={{color:"#0078d4",fontSize:9,letterSpacing:2,marginBottom:12}}>⚡ QUICK START — 3 SCHRITTE</div>
+                {[
+                  {step:"01", title:"PowerShell öffnen", cmd:"Win + X → Windows PowerShell (Admin)",
+                   note:"Als Administrator ausführen wichtig!"},
+                  {step:"02", title:"Scout starten", cmd:`powershell -ExecutionPolicy Bypass -File scripts\windows\dis_scout.ps1`,
+                   note:"Oder: Doppelklick auf install_windows.bat"},
+                  {step:"03", title:"Report ins Dashboard", cmd:"Report wird automatisch kopiert → hier einfügen → Analysieren",
+                   note:"Oder .json Datei direkt zu claude.ai hochladen"},
+                ].map(({step,title,cmd,note})=>(
+                  <div key={step} style={{display:"flex",gap:14,marginBottom:14,
+                    padding:"12px",background:"#080b12",borderRadius:8,border:"1px solid #0078d422"}}>
+                    <div style={{color:"#0078d4",fontSize:18,fontWeight:900,minWidth:28}}>{step}</div>
+                    <div style={{flex:1}}>
+                      <div style={{color:"#e2e5f0",fontWeight:700,fontSize:12,marginBottom:4}}>{title}</div>
+                      <code style={{display:"block",color:"#60b4ff",fontSize:10,
+                        background:"#04050a",borderRadius:5,padding:"6px 10px",
+                        marginBottom:4,wordBreak:"break-all"}}>{cmd}</code>
+                      <div style={{color:"#2a3a4a",fontSize:10}}>{note}</div>
+                    </div>
+                    <button onClick={()=>navigator.clipboard.writeText(cmd)}
+                      style={{background:"#0078d418",border:"1px solid #0078d444",color:"#0078d4",
+                        borderRadius:5,padding:"6px 10px",cursor:"pointer",
+                        fontFamily:"monospace",fontSize:9,alignSelf:"flex-start",flexShrink:0}}>
+                      COPY
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* What it scans */}
+              <div style={{background:"#04050a",border:"1px solid #0078d422",borderRadius:10,padding:"16px",marginBottom:16}}>
+                <div style={{color:"#0078d4",fontSize:9,letterSpacing:2,marginBottom:12}}>📊 WAS GESCANNT WIRD</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:8}}>
+                  {[
+                    ["🛡️","Windows Defender","Status, Signature-Alter, Tamper Protection"],
+                    ["🔥","Firewall","Alle Profile (Domain/Private/Public)"],
+                    ["🌐","Netzwerk","Aktive Verbindungen, DNS, Proxy, Hosts-File"],
+                    ["⚡","Prozesse","High-CPU, Autorun, Suspicious Services"],
+                    ["📋","Scheduled Tasks","Nicht-Microsoft Tasks die laufen"],
+                    ["🔒","Zertifikate","User/Machine Root Certs (MITM-Check)"],
+                    ["💾","Shadow Copies","Ransomware-Indikator: Anzahl Backups"],
+                    ["🔑","UAC & SecureBoot","Sicherheits-Grundeinstellungen"],
+                    ["📦","Remote Tools","TeamViewer, AnyDesk, VNC Detection"],
+                    ["🔐","BitLocker","Festplatten-Verschlüsselung Status"],
+                  ].map(([icon,title,desc])=>(
+                    <div key={title} style={{background:"#080b12",borderRadius:7,
+                      padding:"10px 12px",border:"1px solid #0078d418"}}>
+                      <div style={{fontSize:16,marginBottom:4}}>{icon}</div>
+                      <div style={{color:"#c8d0e0",fontSize:11,fontWeight:700,marginBottom:2}}>{title}</div>
+                      <div style={{color:"#2a3a4a",fontSize:9,lineHeight:1.5}}>{desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Paste Area */}
+              <div style={{background:"#04050a",border:"1px solid #0078d422",borderRadius:10,padding:"16px"}}>
+                <div style={{color:"#0078d4",fontSize:9,letterSpacing:2,marginBottom:10}}>
+                  📋 REPORT EINFÜGEN → KI ANALYSE
+                </div>
+                <WinReportPaste/>
+              </div>
+            </div>
+
+            {/* Threat list for Windows */}
+            <div style={{background:"#080b12",border:"1px solid #1a2030",borderRadius:12,padding:"16px 18px"}}>
+              <div style={{color:"#0078d4",fontSize:10,letterSpacing:2,marginBottom:14}}>
+                🪟 WINDOWS THREAT MODULES
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10}}>
+                {THREATS.filter(t=>t.platform==="windows").map(t=>(
+                  <ThreatCard key={t.id} threat={t} onScan={handleScan}/>
+                ))}
               </div>
             </div>
           </div>
