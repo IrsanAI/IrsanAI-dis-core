@@ -380,6 +380,244 @@ function ThreatCard({threat,onScan}) {
   );
 }
 
+
+// ── EXPORT FOR CLAUDE ──────────────────────────────────────────────
+function buildClaudeExport(threat, rawReport, analysis, termLines, script) {
+  const now = new Date().toISOString();
+  const sys = rawReport?.system || rawReport?.system_context || {};
+
+  const md = `# 🛡️ DIS — Device Intelligence System
+## Export for Claude AI Analysis
+> Generated: ${now}
+> Tool: IrsanAI DIS-Core v1.0 · github.com/IrsanAI/IrsanAI-dis-core
+
+---
+
+## 📋 Scan Context
+
+| Field | Value |
+|---|---|
+| **Tool** | DIS — Device Intelligence System |
+| **Threat Module** | ${threat?.icon || ''} ${threat?.name || 'Unknown'} |
+| **Severity** | ${threat?.sev || 'UNKNOWN'} |
+| **Platform** | ${threat?.platform || 'android'} |
+| **Device** | ${sys.model || '?'} |
+| **Android Version** | ${sys.android || sys.android_version || '?'} |
+| **Security Patch** | ${sys.patch || sys.security_patch || '?'} |
+| **Knox Warranty** | ${sys.knox_warranty || '?'} |
+| **SELinux** | ${sys.selinux || '?'} |
+| **Scan Time** | ${rawReport?.dis_meta?.generated_at || now} |
+
+---
+
+## 🎯 What the User Did
+
+1. Opened **DIS Dashboard** on Android device (localhost:3001)
+2. Selected threat: **${threat?.name || '?'}** (${threat?.sev || '?'})
+3. Generated Scout Script for platform: **${threat?.platform || 'android'}**
+4. Executed script in **Termux** on Samsung device
+5. Collected JSON report and pasted into dashboard
+6. Requesting Claude AI analysis
+
+---
+
+## 🖥️ Terminal Output (Scout Execution)
+
+\`\`\`
+${termLines.map(l => l.t).join('\n')}
+\`\`\`
+
+---
+
+## 📊 Raw Device Report (JSON)
+
+\`\`\`json
+${JSON.stringify(rawReport, null, 2)}
+\`\`\`
+
+---
+
+## 🔍 Known Attack Patterns for this Threat
+
+${(threat?.cve || []).map(c => `- \`${c}\``).join('\n')}
+
+---
+
+## 🛠️ Fix Playbook (from threat module)
+
+${(threat?.fixes || []).map((f, i) => `${i + 1}. ${f}`).join('\n')}
+
+---
+
+## 💬 Instructions for Claude
+
+You are **IrsanAI** — an autonomous device security analyst.
+
+**User's Device:** ${sys.model || 'Samsung'} running Android ${sys.android || sys.android_version || '?'}
+**Threat being analyzed:** ${threat?.name || 'Security Scan'}
+**Severity level:** ${threat?.sev || 'UNKNOWN'}
+
+Please analyze the raw device report above and provide:
+1. **Is this threat active?** (yes/no/unclear) with confidence %
+2. **Risk Score** (0-100)
+3. **What the scan data reveals** — specific findings from the JSON
+4. **Immediate actions** the user should take RIGHT NOW
+5. **Next scout script** to run for deeper investigation
+6. **Long-term hardening** recommendations
+
+Respond in German. Be specific and reference actual values from the scan data.
+`;
+
+  return md;
+}
+
+function ExportModal({threat, rawReport, analysis, termLines, script, onClose}) {
+  const [mode, setMode] = useState('preview'); // preview | copied | downloaded
+  const [exportType, setExportType] = useState('markdown'); // markdown | json | clipboard
+
+  const mdContent = buildClaudeExport(threat, rawReport, analysis, termLines, script);
+  const jsonContent = JSON.stringify({
+    dis_export: {
+      version: "1.0",
+      generated_at: new Date().toISOString(),
+      threat: { id: threat?.id, name: threat?.name, severity: threat?.sev, platform: threat?.platform },
+      device_report: rawReport,
+      terminal_log: termLines?.map(l => l.t),
+      fix_playbook: threat?.fixes,
+      known_patterns: threat?.cve,
+      llm_instruction: `Analyze this DIS security scan. Threat: ${threat?.name}. Device: ${rawReport?.system?.model}. Provide: 1) Threat active? 2) Risk 0-100. 3) Specific findings. 4) Immediate actions. 5) Next scan script. Respond in German.`
+    }
+  }, null, 2);
+
+  const handleCopy = () => {
+    const content = exportType === 'json' ? jsonContent : mdContent;
+    navigator.clipboard.writeText(content);
+    setMode('copied');
+    setTimeout(() => setMode('preview'), 2500);
+  };
+
+  const handleDownload = () => {
+    const content = exportType === 'json' ? jsonContent : mdContent;
+    const ext = exportType === 'json' ? 'json' : 'md';
+    const fname = `dis_claude_export_${threat?.id || 'scan'}_${Date.now()}.${ext}`;
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+    setMode('downloaded');
+    setTimeout(() => setMode('preview'), 2500);
+  };
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'#000000f2',zIndex:400,
+      display:'flex',alignItems:'center',justifyContent:'center',padding:12}}>
+      <div style={{background:'#06080f',border:'1px solid #bf9ffe44',borderRadius:14,
+        maxWidth:820,width:'100%',maxHeight:'92vh',display:'flex',flexDirection:'column',
+        boxShadow:'0 0 80px #bf9ffe18'}}>
+
+        {/* Header */}
+        <div style={{padding:'14px 18px',borderBottom:'1px solid #0f1520',
+          display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div style={{color:'#bf9ffe',fontWeight:700,fontSize:14}}>
+              🤖 EXPORT FOR CLAUDE AI
+            </div>
+            <div style={{color:'#2a3a4a',fontSize:10,marginTop:2}}>
+              Komplette Analyse-Kette → Kopieren → Claude.ai einfügen
+            </div>
+          </div>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:18}}>✕</button>
+        </div>
+
+        {/* Format Selector */}
+        <div style={{padding:'12px 18px',borderBottom:'1px solid #0f1520',display:'flex',gap:8}}>
+          {[
+            ['markdown','📄 Markdown','Für claude.ai Chat Upload oder Copy-Paste'],
+            ['json','{ } JSON','Für API oder direkte LLM-Integration'],
+          ].map(([val,label,desc])=>(
+            <button key={val} onClick={()=>setExportType(val)}
+              style={{flex:1,background:exportType===val?'#bf9ffe18':'#0a0c14',
+                border:`1px solid ${exportType===val?'#bf9ffe':'#1a2030'}`,
+                color:exportType===val?'#bf9ffe':'#2a3a4a',borderRadius:8,
+                padding:'10px 14px',cursor:'pointer',textAlign:'left',fontFamily:'monospace'}}>
+              <div style={{fontSize:12,fontWeight:700,marginBottom:2}}>{label}</div>
+              <div style={{fontSize:9,opacity:0.7}}>{desc}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Summary of what's included */}
+        <div style={{padding:'10px 18px',borderBottom:'1px solid #0f1520',
+          display:'flex',gap:16,flexWrap:'wrap'}}>
+          {[
+            ['🎯','Threat',threat?.name],
+            ['📱','Device',rawReport?.system?.model||'?'],
+            ['🔒','Patch',rawReport?.system?.patch||rawReport?.system?.security_patch||'?'],
+            ['📊','Report',`${JSON.stringify(rawReport||{}).length} chars`],
+            ['🖥️','Terminal',`${termLines?.length||0} lines`],
+          ].map(([icon,label,val])=>(
+            <div key={label} style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:12}}>{icon}</span>
+              <div>
+                <div style={{color:'#2a3a4a',fontSize:8,letterSpacing:1}}>{label}</div>
+                <div style={{color:'#c8d0e0',fontSize:10,fontFamily:'monospace'}}>{val}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Preview */}
+        <div style={{flex:1,overflow:'auto',padding:'14px 18px'}}>
+          <pre style={{color:'#5a7a5a',fontFamily:"'Courier New',monospace",fontSize:10,
+            lineHeight:1.7,margin:0,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+            {exportType==='json' ? jsonContent.slice(0,2000)+'...' : mdContent.slice(0,2000)+'...'}
+          </pre>
+        </div>
+
+        {/* Action Buttons */}
+        <div style={{padding:'14px 18px',borderTop:'1px solid #0f1520'}}>
+
+          {/* Step hint */}
+          <div style={{background:'#0d0f1a',border:'1px solid #bf9ffe22',borderRadius:8,
+            padding:'10px 14px',marginBottom:12}}>
+            <div style={{color:'#bf9ffe',fontSize:9,letterSpacing:2,marginBottom:6}}>WIE ZU CLAUDE SCHICKEN</div>
+            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+              {[
+                '1. Unten auf "KOPIEREN" tippen',
+                '2. claude.ai im Browser öffnen',
+                '3. Neuer Chat → Text einfügen (lange drücken → Einfügen)',
+                '4. Oder: Datei runterladen → bei claude.ai hochladen (📎)',
+              ].map((s,i)=>(
+                <div key={i} style={{color:'#4a5a6a',fontSize:11}}>{s}</div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{display:'flex',gap:10}}>
+            <button onClick={handleCopy}
+              style={{flex:2,background:mode==='copied'?'#00e5a022':'#bf9ffe18',
+                border:`1px solid ${mode==='copied'?'#00e5a0':'#bf9ffe'}`,
+                color:mode==='copied'?'#00e5a0':'#bf9ffe',
+                borderRadius:8,padding:'13px',cursor:'pointer',
+                fontFamily:'monospace',fontWeight:700,fontSize:13}}>
+              {mode==='copied'?'✅ KOPIERT — jetzt claude.ai öffnen!':'📋 KOPIEREN (Zwischenablage)'}
+            </button>
+            <button onClick={handleDownload}
+              style={{flex:1,background:mode==='downloaded'?'#30d15822':'#30d15818',
+                border:`1px solid ${mode==='downloaded'?'#30d158':'#30d15844'}`,
+                color:mode==='downloaded'?'#30d158':'#30d15888',
+                borderRadius:8,padding:'13px',cursor:'pointer',
+                fontFamily:'monospace',fontWeight:700,fontSize:12}}>
+              {mode==='downloaded'?'✅ SAVED':'⬇️ DOWNLOAD'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnalysisResult({analysis,threat}) {
   if(!analysis) return null;
   const c=SEV[analysis.risk_label]||SEV[threat?.sev]||"#888";
@@ -452,8 +690,44 @@ function AnalysisResult({analysis,threat}) {
           ))}
         </div>
       )}
-      <div style={{textAlign:"center",color:"#2a3a4a",fontSize:10}}>
-        Nächster Scan: <span style={{color:"#60b4ff"}}>{analysis.next_scan}</span>
+      <div style={{textAlign:"center",color:"#2a3a4a",fontSize:10,marginBottom:16}}>
+        Nächster Scan empfohlen: <span style={{color:"#60b4ff"}}>{analysis.next_scan}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── EXPORT BUTTON (used in Analyse Tab) ────────────────────────────
+function ExportButton({onClick}) {
+  const [h,setH]=useState(false);
+  return (
+    <div style={{marginTop:20,background:"#0d0a1a",border:"1px solid #bf9ffe44",
+      borderRadius:12,padding:"16px 18px"}}>
+      <div style={{color:"#bf9ffe",fontSize:9,letterSpacing:2,marginBottom:8}}>
+        🤖 WEITER MIT CLAUDE AI
+      </div>
+      <div style={{color:"#3a3a5a",fontSize:11,marginBottom:14,lineHeight:1.6}}>
+        Exportiere die komplette Analyse-Kette — Threat-Kontext, Gerätedaten, 
+        Terminal-Output und Scan-Ergebnis — als Paket für Claude AI.
+        Kopieren → claude.ai → einfügen → tiefere Analyse anfordern.
+      </div>
+      <button onClick={onClick}
+        onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+        style={{width:"100%",background:h?"#bf9ffe28":"#bf9ffe18",
+          border:"1px solid #bf9ffe",color:"#bf9ffe",borderRadius:9,
+          padding:"14px",cursor:"pointer",fontFamily:"monospace",
+          fontWeight:700,fontSize:13,letterSpacing:1,
+          boxShadow:h?"0 0 20px #bf9ffe33":"none",transition:"all 0.2s"}}>
+        🤖 EXPORT FÜR CLAUDE AI →
+      </button>
+      <div style={{display:"flex",gap:8,marginTop:8}}>
+        {["📄 Markdown","{ } JSON","📋 Clipboard"].map(t=>(
+          <div key={t} style={{flex:1,textAlign:"center",color:"#2a3a4a",
+            fontSize:9,padding:"4px",background:"#080b12",borderRadius:5,
+            border:"1px solid #1a2030"}}>
+            {t}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -473,6 +747,8 @@ export default function App() {
   const [analysis,setAnalysis]=useState(null);
   const [analyzing,setAnalyzing]=useState(false);
   const [termLines,setTermLines]=useState([]);
+  const [showExport,setShowExport]=useState(false);
+  const [rawReport,setRawReport]=useState(null);
   const addLine=(t,c="#7c82a8")=>setTermLines(l=>[...l,{t,c}]);
 
   // Fetch environment from server
@@ -498,6 +774,7 @@ export default function App() {
     setAnalysis(null);
     setPastedJson("");
     setParseErr("");
+    setRawReport(null);
     setTab("scan");
     setTermLines([]);
     setTimeout(()=>addLine(`$ dis_scout --threat ${threat.id}`,"#ff2d55"),100);
@@ -509,7 +786,7 @@ export default function App() {
   const handleAnalyze=useCallback(async()=>{
     setParseErr("");
     let parsed;
-    try{parsed=JSON.parse(pastedJson.trim());}
+    try{parsed=JSON.parse(pastedJson.trim());setRawReport(parsed);}
     catch{setParseErr("❌ Kein gültiges JSON.");return;}
     if(!parsed.dis_meta&&!parsed.isu_meta&&!parsed.sis_meta){setParseErr("❌ Kein DIS-Report erkannt.");return;}
     setTab("analyze");
@@ -543,7 +820,8 @@ export default function App() {
 
   return (
     <div style={{minHeight:"100vh",background:"#04050a",color:"#c8d0e0",fontFamily:"'Courier New',monospace",paddingBottom:60}}>
-      {showScript&&<ScriptModal script={script} threat={activeThreat} onClose={()=>setShowScript(false)}/>}
+      {showScript&&<ScriptModal script={script} threat={activeThreat} onClose={()=>setShowScript(false)}/> }
+      {showExport&&rawReport&&<ExportModal threat={activeThreat} rawReport={rawReport} analysis={analysis} termLines={termLines} script={script} onClose={()=>setShowExport(false)}/>}
 
       {/* Header */}
       <div style={{background:"linear-gradient(180deg,#080b14,#04050a)",borderBottom:"1px solid #0f1520",padding:"14px 20px 0"}}>
@@ -703,6 +981,7 @@ export default function App() {
                   </button>
                 )}
                 <AnalysisResult analysis={analysis} threat={activeThreat}/>
+                {analysis&&<ExportButton onClick={()=>setShowExport(true)}/>}
               </>
             )}
           </div>
