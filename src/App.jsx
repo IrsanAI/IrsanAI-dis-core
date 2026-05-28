@@ -423,17 +423,17 @@ function buildClaudeExport(threat, rawReport, analysis, termLines, script) {
 
 ## 🖥️ Terminal Output (Scout Execution)
 
-\`\`\`
+```
 ${termLines.map(l => l.t).join('\n')}
-\`\`\`
+```
 
 ---
 
 ## 📊 Raw Device Report (JSON)
 
-\`\`\`json
+```json
 ${JSON.stringify(rawReport, null, 2)}
-\`\`\`
+```
 
 ---
 
@@ -771,7 +771,7 @@ Report: ${JSON.stringify(parsed, null, 2)}`}]
         })
       });
       const d = await res.json();
-      const txt = (d.content||[]).map(b=>b.text||"").join("").replace(/\`\`\`json|\`\`\`/g,"").trim();
+      const txt = (d.content||[]).map(b=>b.text||"").join("").replace(/```json|```/g,"").trim();
       setAnalysis(JSON.parse(txt));
     } catch(e) { setErr("❌ KI-Fehler: "+e.message); }
     setAnalyzing(false);
@@ -780,7 +780,7 @@ Report: ${JSON.stringify(parsed, null, 2)}`}]
   const exportForClaude = () => {
     let parsed = {};
     try { parsed = JSON.parse(json); } catch {}
-    const md = `# DIS Windows Security Report\n> IrsanAI Stack\n\n\`\`\`json\n${json}\n\`\`\`\n\n**Instruction:** Analysiere diesen Windows Security Report auf Deutsch. Risk-Score 0-100, Sofortmaßnahmen, Härtungsempfehlungen.`;
+    const md = `# DIS Windows Security Report\n> IrsanAI Stack\n\n```json\n${json}\n```\n\n**Instruction:** Analysiere diesen Windows Security Report auf Deutsch. Risk-Score 0-100, Sofortmaßnahmen, Härtungsempfehlungen.`;
     navigator.clipboard.writeText(md);
   };
 
@@ -788,11 +788,7 @@ Report: ${JSON.stringify(parsed, null, 2)}`}]
   return (
     <div>
       <textarea value={json} onChange={e=>{setJson(e.target.value);setErr("");}}
-        placeholder={'{
-  "dis_meta": { "platform": "windows_powershell", ... },
-  "system": { "os_name": "Windows 11", ... },
-  ...
-}'}
+        placeholder='{ "dis_meta": { "platform": "windows_powershell" }, "system": { "os_name": "Windows 11" }, ... }'
         style={{width:"100%",minHeight:160,background:"#030508",
           border:`1px solid ${err?"#ff2d5544":"#0078d422"}`,
           borderRadius:9,padding:"12px",color:"#5a8aaa",fontFamily:"monospace",
