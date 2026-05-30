@@ -560,7 +560,7 @@ export default function App() {
     // Client-side env detection
     detectEnvironment().then(e=>{
       setClientEnv(e);
-      if(e.type!=="unknown") setPlatFilter(e.type==="termux"?"android":e.type);
+      // Don't auto-filter — show ALL threats, user can filter manually
     }).catch(()=>{});
 
     // Server env via API
