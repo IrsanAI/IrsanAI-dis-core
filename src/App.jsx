@@ -97,35 +97,41 @@ const THREATS = [
     bash:"echo '[1] Kernel Modules'\nMODS=$(lsmod 2>/dev/null|grep -vE '^(Module|bridge|xt_|nf_|ip_|veth|tun|loop|dm_|ext4|usb|pci|drm|e1000|cfg80211)'|awk '{print $1}'|tr '\\n' ',')\necho '[2] LD_PRELOAD'\nLD_PRE=$(cat /etc/ld.so.preload 2>/dev/null||echo empty)\necho '[3] SUID outside standard'\nSUID=$(find / -perm -4000 2>/dev/null|grep -vE '^/(bin|usr/bin|usr/sbin|sbin|usr/lib)'|tr '\\n' ',')\necho '[4] Open listeners'\nLISTEN=$(ss -tlnp 2>/dev/null|grep -v '127\\|::1'|tail -n +2)" },
 ];
 
-// ── CLAUDE ANALYSIS ───────────────────────────────
-async function analyzeWithClaude(report, threat) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514", max_tokens: 1000,
-      messages: [{ role: "user", content:
-        "IrsanAI Security Analyst. JSON only, no markdown:\n" +
-        "{\n" +
-        '  "threat_active": true,\n' +
-        '  "confidence": 0,\n' +
-        '  "risk_score": 0,\n' +
-        '  "risk_label": "KRITISCH|HOCH|MITTEL|NIEDRIG|SICHER",\n' +
-        '  "summary": "Was wurde gefunden?",\n' +
-        '  "active_indicators": ["konkreter Befund"],\n' +
-        '  "immediate_actions": ["Sofortmassnahme mit Befehl"],\n' +
-        '  "hardening": ["Langzeit-Haertung"],\n' +
-        '  "auto_fix": ["adb shell ... oder powershell ..."],\n' +
-        '  "next_scan": "sofort|24h|7d|30d"\n' +
-        "}\n\n" +
-        "Threat: " + (threat?.name||"?") + " | Severity: " + (threat?.sev||"?") + "\n" +
-        "Patterns: " + JSON.stringify(threat?.cve||[]) + "\n" +
-        "Report:\n" + JSON.stringify(report, null, 2)
-      }]
-    })
-  });
-  const d = await res.json();
-  return safeJsonParse((d.content||[]).map(b=>b.text||"").join(""));
+// ── LLM PROMPT BUILDER ────────────────────────────────────────────
+// LLM-agnostic: works with Claude, GPT-4, Gemini, Grok, Llama etc.
+function buildLLMPrompt(report, threat) {
+  const parts = [
+    "Du bist IrsanAI — ein autonomes Device-Security-Analyse-System.",
+    "Analysiere den Geraete-Scan-Report und antworte NUR mit validem JSON.",
+    "KEIN Markdown, KEINE Erklaerungen davor/danach — NUR das JSON-Objekt.",
+    "",
+    "Antworte exakt so:",
+    "{",
+    "  \"threat_active\": true,",
+    "  \"confidence\": 85,",
+    "  \"risk_score\": 72,",
+    "  \"risk_label\": \"HOCH\",",
+    "  \"summary\": \"Was wurde gefunden?\",",
+    "  \"active_indicators\": [\"Befund mit konkretem Wert aus Report\"],",
+    "  \"immediate_actions\": [\"Sofortmassnahme — ausfuehrbar\"],",
+    "  \"hardening\": [\"Langzeit-Haertung\"],",
+    "  \"auto_fix\": [\"adb shell ... ODER powershell ...\"],",
+    "  \"next_scan\": \"sofort|24h|7d|30d\"",
+    "}",
+    "",
+    "risk_label muss sein: KRITISCH, HOCH, MITTEL, NIEDRIG oder SICHER",
+    "Antworte auf Deutsch. Referenziere Werte aus dem Report.",
+    "",
+    "--- SCAN REPORT ---",
+    "Threat: " + (threat?.name||"?"),
+    "Severity: " + (threat?.sev||"?"),
+    "Platform: " + (threat?.platform||"android"),
+    "Patterns: " + (threat?.cve||[]).join(", "),
+    "",
+    "Device Report (JSON):",
+    JSON.stringify(report, null, 2)
+  ];
+  return parts.join("\n");
 }
 
 // ── UI COMPONENTS ─────────────────────────────────
@@ -551,6 +557,9 @@ export default function App() {
   const [analyzing,setAnalyzing]       = useState(false);
   const [rawReport,setRawReport]       = useState(null);
   const [showExport,setShowExport]     = useState(false);
+  const [llmPrompt,setLlmPrompt]       = useState("");
+  const [llmResponse,setLlmResponse]   = useState("");
+  const [promptCopied,setPromptCopied] = useState(false);
   const [termLines,setTermLines]       = useState([]);
 
   const addLine = (t,c="#7c82a8") => setTermLines(l=>[...l,{t,c}]);
@@ -610,7 +619,8 @@ export default function App() {
     },1800);
   },[clientEnv]);
 
-  const handleAnalyze = useCallback(async()=>{
+  // Parse report JSON and prepare LLM prompt
+  const handleParseReport = useCallback(()=>{
     setParseErr("");
     const parsed = safeJsonParse(pastedJson);
     if(!parsed){ setParseErr("❌ Kein gültiges JSON. Gesamten Report-Inhalt kopieren."); return; }
@@ -618,27 +628,30 @@ export default function App() {
       setParseErr("❌ Kein DIS-Report erkannt. Bitte Scout-Script ausführen."); return;
     }
     setRawReport(parsed);
-    setTab("analyze");
-    setAnalyzing(true);
-    setTermLines([]);
     const sys = parsed.system||parsed.system_context||{};
-    [
-      ["$ dis_analyze --report <json>","#ff2d55"],
-      ["→ Gerät: "+(sys.model||"?")+" | Android "+(sys.android||sys.android_version||"?"),"#60b4ff"],
-      ["→ Patch: "+(sys.patch||sys.security_patch||"?"),"#f7c07e"],
-      ["→ Threat: "+(parsed.dis_meta?.threat_name||parsed.isu_meta?.threat_name||"?"),"#ff9500"],
-      ["→ Sende an Claude AI...","#7c82a8"],
-    ].forEach(([t,c],i)=>setTimeout(()=>addLine(t,c),i*200));
-    try {
-      const r = await analyzeWithClaude(parsed, activeThreat);
-      setAnalysis(r);
-      addLine("✅ "+r.risk_label+" — Score: "+r.risk_score,"#00e5a0");
-    } catch(e) {
-      setParseErr("❌ KI-Fehler: "+e.message);
-      setTab("scan");
+    setTermLines([]);
+    addLine("$ dis_parse --report <json>","#ff2d55");
+    addLine("→ Gerät: "+(sys.model||"?")+" | Android "+(sys.android||sys.android_version||"?"),"#60b4ff");
+    addLine("→ Patch: "+(sys.patch||sys.security_patch||"?"),"#f7c07e");
+    addLine("→ Report validiert ✅ — Prompt bereit","#00e5a0");
+    addLine("→ Prompt kopieren → LLM einfügen → Antwort hierher","#7c82a8");
+  },[pastedJson]);
+
+  // Import LLM response
+  const handleImportResponse = useCallback(()=>{
+    setParseErr("");
+    const parsed = safeJsonParse(llmResponse);
+    if(!parsed){
+      setParseErr("❌ Keine gültige JSON-Antwort. LLM muss reines JSON zurückgeben.");
+      return;
     }
-    setAnalyzing(false);
-  },[pastedJson,activeThreat]);
+    if(!parsed.risk_score&&!parsed.risk_label){
+      setParseErr("❌ Kein gültiges Analyse-Format. Prompt erneut an LLM senden.");
+      return;
+    }
+    setAnalysis(parsed);
+    addLine("✅ "+parsed.risk_label+" — Score: "+parsed.risk_score,"#00e5a0");
+  },[llmResponse]);
 
   const cats  = ["all","surveillance","windows","linux","os"];
   const plats = ["all","android","windows","linux","ios"];
@@ -829,59 +842,151 @@ export default function App() {
             {!activeThreat?(
               <div style={{textAlign:"center",padding:"60px 20px",color:"#2a3a4a"}}>
                 <div style={{fontSize:40,marginBottom:12}}>🧠</div>
-                <div>Erst Scout-Script ausführen (THREATS → SCAN STARTEN)</div>
+                <div>THREATS → Bedrohung wählen → SCAN STARTEN</div>
               </div>
             ):(
               <>
-                <div style={{color:"#2a3a4a",fontSize:11,marginBottom:12}}>
-                  Scout ausführen →{" "}
-                  <code style={{color:"#60b4ff"}}>cat ~/dis_*.json</code>
-                  {" "}→ hier einfügen → Analysieren.
-                  Oder: JSON direkt zu{" "}
-                  <span style={{color:"#bf9ffe"}}>claude.ai</span> — das{" "}
-                  <code style={{color:"#bf9ffe"}}>llm_instruction</code> Feld erklärt alles.
+                {/* STEP 1: Paste Report JSON */}
+                <div style={{background:"#080b12",border:"1px solid #1a2030",
+                  borderRadius:10,padding:"16px",marginBottom:14}}>
+                  <div style={{color:"#60b4ff",fontSize:9,letterSpacing:2,marginBottom:10}}>
+                    SCHRITT 1 — SCOUT REPORT EINFÜGEN
+                  </div>
+                  <div style={{color:"#2a3a4a",fontSize:11,marginBottom:10}}>
+                    Scout-Script ausführen →{" "}
+                    <code style={{color:"#60b4ff"}}>cat ~/dis_*.json</code>
+                    {" "}→ hier einfügen
+                  </div>
+                  <textarea value={pastedJson}
+                    onChange={e=>{setPastedJson(e.target.value);setParseErr("");setRawReport(null);setAnalysis(null);setLlmPrompt("");}}
+                    placeholder='{ "dis_meta": { "threat_id": "sim_swap", ... }, "system": { ... } }'
+                    style={{width:"100%",minHeight:120,background:"#030508",
+                      border:"1px solid "+(parseErr?"#ff2d5544":"#1a2030"),
+                      borderRadius:9,padding:"12px",color:"#5a8a5a",fontFamily:"monospace",
+                      fontSize:11,resize:"vertical",outline:"none",
+                      boxSizing:"border-box",lineHeight:1.6,marginBottom:10}}/>
+                  {parseErr&&(
+                    <div style={{color:"#ff2d55",fontSize:11,padding:"7px 12px",
+                      background:"#140507",borderRadius:6,marginBottom:8}}>{parseErr}</div>
+                  )}
+                  <button onClick={()=>{
+                      setParseErr("");
+                      const r = safeJsonParse(pastedJson);
+                      if(!r){ setParseErr("❌ Kein gültiges JSON."); return; }
+                      if(!r.dis_meta&&!r.isu_meta&&!r.sis_meta){ setParseErr("❌ Kein DIS-Report erkannt."); return; }
+                      setRawReport(r);
+                      const sys = r.system||r.system_context||{};
+                      setTermLines([]);
+                      setTimeout(()=>addLine("$ dis_parse --report <json>","#ff2d55"),50);
+                      setTimeout(()=>addLine("→ Gerät: "+(sys.model||"?")+" | Android "+(sys.android||sys.android_version||"?"),"#60b4ff"),300);
+                      setTimeout(()=>addLine("→ Patch: "+(sys.patch||sys.security_patch||"?"),"#f7c07e"),550);
+                      setTimeout(()=>addLine("✅ Report validiert — Prompt generiert","#00e5a0"),800);
+                      setTimeout(()=>addLine("→ Prompt kopieren → LLM → Antwort zurück","#7c82a8"),1050);
+                      setLlmPrompt(buildLLMPrompt(r, activeThreat));
+                    }}
+                    disabled={!pastedJson.trim()}
+                    style={{width:"100%",background:pastedJson.trim()?"#60b4ff18":"#0a0c14",
+                      border:"1px solid "+(pastedJson.trim()?"#60b4ff55":"#1a2030"),
+                      color:pastedJson.trim()?"#60b4ff":"#333",borderRadius:7,padding:"11px",
+                      cursor:pastedJson.trim()?"pointer":"not-allowed",
+                      fontFamily:"monospace",fontWeight:700,fontSize:12}}>
+                    ✅ REPORT VALIDIEREN & PROMPT GENERIEREN →
+                  </button>
                 </div>
 
-                <textarea value={pastedJson}
-                  onChange={e=>{setPastedJson(e.target.value);setParseErr("");}}
-                  placeholder='{ "dis_meta": { "threat_id": "...", "platform": "termux_android" }, "system": { ... } }'
-                  style={{width:"100%",minHeight:180,background:"#030508",
-                    border:"1px solid "+(parseErr?"#ff2d5544":"#1a2030"),
-                    borderRadius:10,padding:"14px",color:"#5a8a5a",fontFamily:"monospace",
-                    fontSize:11,resize:"vertical",outline:"none",
-                    boxSizing:"border-box",lineHeight:1.6,marginBottom:8}}/>
-
-                {parseErr&&(
-                  <div style={{color:"#ff2d55",fontSize:11,padding:"8px 12px",
-                    background:"#140507",borderRadius:6,marginBottom:10}}>{parseErr}</div>
-                )}
-
+                {/* Terminal log */}
                 {termLines.length>0&&(
                   <div style={{background:"#030508",border:"1px solid #0f1520",
-                    borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+                    borderRadius:10,padding:"12px 14px",marginBottom:14}}>
                     {termLines.map((l,i)=>(
                       <div key={i} style={{color:l.c,fontSize:11,lineHeight:1.65}}>{l.t}</div>
                     ))}
-                    {analyzing&&<Blink/>}
                   </div>
                 )}
 
-                {!analysis&&(
-                  <button onClick={handleAnalyze}
-                    disabled={!pastedJson.trim()||analyzing}
-                    style={{width:"100%",
-                      background:pastedJson.trim()?"#ff2d5518":"#0a0c14",
-                      border:"1px solid "+(pastedJson.trim()?"#ff2d5555":"#1a2030"),
-                      color:pastedJson.trim()?"#ff2d55":"#333",
-                      borderRadius:7,padding:"13px",
-                      cursor:pastedJson.trim()?"pointer":"not-allowed",
-                      fontFamily:"monospace",fontWeight:700,fontSize:13}}>
-                    {analyzing?"⏳ CLAUDE ANALYSIERT...":"🧠 MIT CLAUDE AI ANALYSIEREN →"}
-                  </button>
+                {/* STEP 2: Copy prompt to LLM */}
+                {(llmPrompt||rawReport)&&!analysis&&(
+                  <div style={{background:"#080b12",border:"1px solid #bf9ffe33",
+                    borderRadius:10,padding:"16px",marginBottom:14}}>
+                    <div style={{color:"#bf9ffe",fontSize:9,letterSpacing:2,marginBottom:10}}>
+                      SCHRITT 2 — PROMPT AN LLM SCHICKEN
+                    </div>
+                    <div style={{color:"#2a3a4a",fontSize:11,marginBottom:12,lineHeight:1.6}}>
+                      Kopiere den Prompt → öffne dein LLM (Claude, ChatGPT, Gemini, Grok...) → einfügen → senden.
+                      Das LLM antwortet mit einem JSON → zurück in Schritt 3 einfügen.
+                    </div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                      {[
+                        ["claude.ai","https://claude.ai","#ff9500"],
+                        ["chatgpt.com","https://chatgpt.com","#00e5a0"],
+                        ["gemini.google.com","https://gemini.google.com","#60b4ff"],
+                        ["grok.x.ai","https://grok.x.ai","#ff2d55"],
+                      ].map(([name,url,c])=>(
+                        <a key={name} href={url} target="_blank" rel="noopener noreferrer"
+                          style={{background:c+"18",border:"1px solid "+c+"44",color:c,
+                            borderRadius:6,padding:"6px 12px",fontSize:10,fontFamily:"monospace",
+                            fontWeight:700,textDecoration:"none"}}>
+                          → {name}
+                        </a>
+                      ))}
+                    </div>
+                    <button onClick={async()=>{
+                        const prompt = llmPrompt || buildLLMPrompt(rawReport, activeThreat);
+                        const ok = await safeClipboardWrite(prompt);
+                        if(ok){setPromptCopied(true);setTimeout(()=>setPromptCopied(false),3000);}
+                      }}
+                      style={{width:"100%",background:promptCopied?"#00e5a022":"#bf9ffe18",
+                        border:"1px solid "+(promptCopied?"#00e5a0":"#bf9ffe"),
+                        color:promptCopied?"#00e5a0":"#bf9ffe",
+                        borderRadius:7,padding:"12px",cursor:"pointer",
+                        fontFamily:"monospace",fontWeight:700,fontSize:13}}>
+                      {promptCopied?"✅ PROMPT KOPIERT — jetzt LLM öffnen & einfügen!":"📋 ANALYSE-PROMPT KOPIEREN"}
+                    </button>
+                  </div>
                 )}
 
+                {/* STEP 3: Paste LLM response */}
+                {(llmPrompt||rawReport)&&!analysis&&(
+                  <div style={{background:"#080b12",border:"1px solid #30d15833",
+                    borderRadius:10,padding:"16px",marginBottom:14}}>
+                    <div style={{color:"#30d158",fontSize:9,letterSpacing:2,marginBottom:10}}>
+                      SCHRITT 3 — LLM ANTWORT EINFÜGEN
+                    </div>
+                    <div style={{color:"#2a3a4a",fontSize:11,marginBottom:10}}>
+                      LLM-Antwort (JSON) hier einfügen → Verarbeiten
+                    </div>
+                    <textarea value={llmResponse}
+                      onChange={e=>{setLlmResponse(e.target.value);setParseErr("");}}
+                      placeholder='{ "threat_active": true, "risk_score": 75, "risk_label": "HOCH", "summary": "...", ... }'
+                      style={{width:"100%",minHeight:120,background:"#030508",
+                        border:"1px solid #30d15822",borderRadius:9,padding:"12px",
+                        color:"#5a8a60",fontFamily:"monospace",fontSize:11,
+                        resize:"vertical",outline:"none",boxSizing:"border-box",lineHeight:1.6,marginBottom:10}}/>
+                    <button onClick={handleImportResponse}
+                      disabled={!llmResponse.trim()}
+                      style={{width:"100%",background:llmResponse.trim()?"#30d15818":"#0a0c14",
+                        border:"1px solid "+(llmResponse.trim()?"#30d15855":"#1a2030"),
+                        color:llmResponse.trim()?"#30d158":"#333",
+                        borderRadius:7,padding:"12px",cursor:llmResponse.trim()?"pointer":"not-allowed",
+                        fontFamily:"monospace",fontWeight:700,fontSize:13}}>
+                      🔬 ANTWORT VERARBEITEN & ANZEIGEN →
+                    </button>
+                  </div>
+                )}
+
+                {/* Result */}
                 <AnalysisResult analysis={analysis} threat={activeThreat}/>
                 {analysis&&<ExportButton onClick={()=>setShowExport(true)}/>}
+
+                {/* Reset */}
+                {analysis&&(
+                  <button onClick={()=>{setAnalysis(null);setLlmResponse("");setLlmPrompt("");setTermLines([]);}}
+                    style={{width:"100%",marginTop:10,background:"transparent",
+                      border:"1px solid #1a2030",color:"#2a3a4a",borderRadius:7,
+                      padding:"10px",cursor:"pointer",fontFamily:"monospace",fontSize:11}}>
+                    ↺ NEUE ANALYSE
+                  </button>
+                )}
               </>
             )}
           </div>
